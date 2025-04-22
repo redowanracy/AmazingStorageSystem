@@ -123,50 +123,69 @@ class ChunkManager:
         
         print(f"Starting upload for '{original_filename}' (Size: {file_size / (1024 * 1024):.2f} MB, File ID: {file_id})")
         
-        # Read file and split into chunks
-        chunks = []
-        with open(file_path, 'rb') as f:
-            chunk_idx = 0
-            
-            while True:
-                chunk_data = f.read(self.chunk_size)
-                if not chunk_data:
-                    break  # End of file
+        # Track uploaded chunks for cleanup in case of failure
+        uploaded_chunks = []
+        
+        try:
+            # Read file and split into chunks
+            chunks = []
+            # Use binary mode and close the file properly
+            with open(file_path, 'rb') as f:
+                chunk_idx = 0
+                
+                while True:
+                    chunk_data = f.read(self.chunk_size)
+                    if not chunk_data:
+                        break  # End of file
+                        
+                    chunk_hash = hashlib.sha256(chunk_data).hexdigest()
                     
-                chunk_hash = hashlib.sha256(chunk_data).hexdigest()
-                
-                provider_idx = chunk_idx % len(self.providers)
-                provider = self.providers[provider_idx]
-                chunk_name = f"{file_id}_chunk_{chunk_idx}_{int(time.time())}"
-                
-                print(f"  Uploading chunk {chunk_idx} ({len(chunk_data)} bytes, hash: {chunk_hash[:8]}...) to provider {provider_idx} ({provider.__class__.__name__}) as '{chunk_name}'")
-                chunk_id = provider.upload_chunk(chunk_data, chunk_name)
-                
-                chunk_info = ChunkInfo(
-                    chunk_index=chunk_idx,
-                    size=len(chunk_data),
-                    hash=chunk_hash,
-                    provider_index=provider_idx,
-                    chunk_id=chunk_id
-                )
-                chunks.append(chunk_info)
-                
-                chunk_idx += 1
-        
-        # Add a new version with these chunks
-        if existing_manifest:
-            version_notes = version_notes or f"Updated {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            manifest.add_version(chunks, notes=version_notes)
-            print(f"Added new version for '{original_filename}' with {len(chunks)} chunks.")
-        else:
-            # For new files, the first version is created with the manifest
-            manifest.add_version(chunks, notes="Initial version")
-        
-        # Save the manifest after all chunks are uploaded
-        self.metadata_manager.save_manifest(manifest)
-        print(f"Successfully {'updated' if existing_manifest else 'uploaded'} '{original_filename}' with {len(chunks)} chunks. Manifest saved.")
-        
-        return file_id
+                    provider_idx = chunk_idx % len(self.providers)
+                    provider = self.providers[provider_idx]
+                    chunk_name = f"{file_id}_chunk_{chunk_idx}_{int(time.time())}"
+                    
+                    print(f"  Uploading chunk {chunk_idx} ({len(chunk_data)} bytes, hash: {chunk_hash[:8]}...) to provider {provider_idx} ({provider.__class__.__name__}) as '{chunk_name}'")
+                    try:
+                        chunk_id = provider.upload_chunk(chunk_data, chunk_name)
+                        uploaded_chunks.append((provider_idx, chunk_id))
+                        
+                        chunk_info = ChunkInfo(
+                            chunk_index=chunk_idx,
+                            size=len(chunk_data),
+                            hash=chunk_hash,
+                            provider_index=provider_idx,
+                            chunk_id=chunk_id
+                        )
+                        chunks.append(chunk_info)
+                        
+                        chunk_idx += 1
+                    except Exception as e:
+                        print(f"Error uploading chunk {chunk_idx}: {e}")
+                        # Don't continue - clean up and raise the exception
+                        self._cleanup_failed_upload(uploaded_chunks)
+                        raise
+            
+            # Add a new version with these chunks
+            if existing_manifest:
+                version_notes = version_notes or f"Updated {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                manifest.add_version(chunks, notes=version_notes)
+                print(f"Added new version for '{original_filename}' with {len(chunks)} chunks.")
+            else:
+                # For new files, the first version is created with the manifest
+                manifest.add_version(chunks, notes="Initial version")
+            
+            # Save the manifest after all chunks are uploaded
+            self.metadata_manager.save_manifest(manifest)
+            print(f"Successfully {'updated' if existing_manifest else 'uploaded'} '{original_filename}' with {len(chunks)} chunks. Manifest saved.")
+            
+            return file_id
+            
+        except Exception as e:
+            print(f"Error during upload of '{original_filename}': {e}")
+            # Clean up any chunks that were uploaded before the error
+            self._cleanup_failed_upload(uploaded_chunks)
+            # Re-raise the exception
+            raise
 
     def _cleanup_failed_upload(self, uploaded_chunks: List[Tuple[int, str]]):
         """Attempts to delete chunks uploaded before a failure occurred."""
