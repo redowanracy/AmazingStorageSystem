@@ -228,13 +228,27 @@ class MetadataManager:
             with open(path, 'r') as f:
                 data = json.load(f)
             
+            # Check if the data is a dictionary as expected
+            if not isinstance(data, dict):
+                print(f"Error: Manifest file {path} contains invalid format (not a dictionary)")
+                return None
+                
+            # Check for required fields
+            if not all(key in data for key in ["original_filename", "total_size", "chunk_size"]):
+                print(f"Error: Manifest file {path} is missing required fields")
+                return None
+            
             # Reconstruct the FileManifest object
-            manifest = FileManifest.from_dict(data)
-            return manifest
-        except (IOError, json.JSONDecodeError, KeyError, TypeError) as e:
+            try:
+                manifest = FileManifest.from_dict(data)
+                return manifest
+            except (KeyError, TypeError, ValueError) as e:
+                print(f"Error reconstructing manifest from {path}: {e}")
+                return None
+                
+        except (IOError, json.JSONDecodeError) as e:
             print(f"Error loading or parsing manifest file {path}: {e}")
-            # Consider logging this error and returning None or raising a custom exception
-            return None 
+            return None
 
     def delete_manifest(self, file_id: str) -> bool:
         """Deletes a manifest file."""
@@ -256,10 +270,14 @@ class MetadataManager:
         manifests = []
         try:
             for filename in os.listdir(self.metadata_dir):
+                # Skip users.json as it's not a file manifest
+                if filename == "users.json":
+                    continue
+                    
                 if filename.endswith(".json"):
                     file_id = filename[:-5] # Remove .json extension
                     manifest = self.load_manifest(file_id)
-                    if manifest:
+                    if manifest and hasattr(manifest, 'file_id') and hasattr(manifest, 'original_filename'):
                         manifests.append((manifest.file_id, manifest.original_filename))
                     else:
                          print(f"Warning: Found invalid manifest file: {filename}")

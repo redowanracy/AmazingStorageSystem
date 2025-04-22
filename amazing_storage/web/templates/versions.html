@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>File Versions - Amazing Storage System</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <style>
+    /* Reuse the same styles from the main template */
+    :root {
+      --primary: #4f46e5;
+      --primary-hover: #4338ca;
+      --danger: #ef4444;
+      --danger-hover: #dc2626;
+      --success: #10b981;
+      --dark: #1f2937;
+      --light: #f9fafb;
+      --gray: #9ca3af;
+      --border: #e5e7eb;
+    }
+    
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: #f3f4f6;
+      color: #374151;
+      line-height: 1.5;
+    }
+    
+    .container {
+      max-width: 900px;
+      margin: 2rem auto;
+      background: white;
+      border-radius: 10px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+      overflow: hidden;
+    }
+    
+    .header {
+      background-color: var(--primary);
+      color: white;
+      padding: 1.5rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    .header h1 {
+      font-weight: 700;
+      font-size: 1.75rem;
+      margin: 0;
+    }
+    
+    .header-back {
+      color: white;
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    
+    .content {
+      padding: 2rem;
+    }
+    
+    h1, h2 {
+      margin: 0;
+    }
+    
+    h2 {
+      font-weight: 600;
+      font-size: 1.25rem;
+      margin-bottom: 1rem;
+      color: var(--dark);
+    }
+    
+    .file-info {
+      margin-bottom: 2rem;
+      padding: 1.5rem;
+      background-color: var(--light);
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+    
+    .file-name {
+      font-size: 1.2rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+    }
+    
+    .alert {
+      padding: 1rem;
+      margin-bottom: 1.5rem;
+      border-radius: 6px;
+    }
+    
+    .alert-success {
+      background-color: rgba(16, 185, 129, 0.1);
+      color: var(--success);
+      border: 1px solid rgba(16, 185, 129, 0.2);
+    }
+    
+    .alert-danger {
+      background-color: rgba(239, 68, 68, 0.1);
+      color: var(--danger);
+      border: 1px solid rgba(239, 68, 68, 0.2);
+    }
+    
+    .version-table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    
+    .version-table th {
+      text-align: left;
+      padding: 1rem;
+      background-color: var(--light);
+      font-weight: 600;
+      color: var(--dark);
+      border-bottom: 1px solid var(--border);
+    }
+    
+    .version-table td {
+      padding: 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+    
+    .version-table tr:last-child td {
+      border-bottom: none;
+    }
+    
+    .version-table tr:hover {
+      background-color: rgba(243, 244, 246, 0.5);
+    }
+    
+    .current-version {
+      display: inline-block;
+      padding: 0.25rem 0.5rem;
+      background-color: var(--primary);
+      color: white;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+    
+    .btn {
+      display: inline-block;
+      padding: 0.5rem 1rem;
+      font-weight: 500;
+      text-align: center;
+      white-space: nowrap;
+      vertical-align: middle;
+      cursor: pointer;
+      border: none;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      transition: all 0.2s ease;
+      text-decoration: none;
+    }
+    
+    .btn-primary {
+      background-color: var(--primary);
+      color: white;
+    }
+    
+    .btn-primary:hover {
+      background-color: var(--primary-hover);
+    }
+    
+    .btn-danger {
+      background-color: var(--danger);
+      color: white;
+    }
+    
+    .btn-danger:hover {
+      background-color: var(--danger-hover);
+    }
+    
+    .footer {
+      text-align: center;
+      padding: 1rem;
+      font-size: 0.875rem;
+      color: var(--gray);
+      border-top: 1px solid var(--border);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>File Versions</h1>
+      <a href="/" class="header-back"><i class="bi bi-arrow-left"></i> Back to Files</a>
+    </div>
+    
+    <div class="content">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, message in messages %}
+            <div class="alert alert-{{ category }}">{{ message }}</div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+      
+      <div class="file-info">
+        <div class="file-name">{{ filename }}</div>
+        <div class="file-id">File ID: {{ file_id }}</div>
+      </div>
+      
+      <div class="version-actions">
+        <a href="/update/{{ file_id }}" class="btn btn-primary"><i class="bi bi-upload"></i> Upload New Version</a>
+      </div>
+      
+      <h2>Available Versions</h2>
+      
+      {% if versions %}
+        <table class="version-table">
+          <thead>
+            <tr>
+              <th>Version</th>
+              <th>Date</th>
+              <th>Notes</th>
+              <th>Chunks</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for version in versions %}
+              <tr>
+                <td>
+                  {% if version.is_current %}
+                    <span class="current-version">Current</span>
+                  {% else %}
+                    <span>{{ loop.index }}</span>
+                  {% endif %}
+                </td>
+                <td>{{ version.timestamp }}</td>
+                <td>{{ version.notes }}</td>
+                <td>{{ version.chunk_count }}</td>
+                <td>
+                  {% if not version.is_current %}
+                    <form method="post" action="/restore/{{ file_id }}/{{ version.version_id }}" style="display:inline;">
+                      <button type="submit" class="btn btn-primary" onclick="return confirm('Are you sure you want to restore this version?');">Restore</button>
+                    </form>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <div class="empty-state">
+          <p>No versions available for this file.</p>
+        </div>
+      {% endif %}
+    </div>
+    
+    <div class="footer">
+      Amazing Storage System — Secure, Distributed Cloud Storage
+    </div>
+  </div>
+</body>
+</html> 

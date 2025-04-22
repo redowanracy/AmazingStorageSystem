@@ -4,10 +4,8 @@ A distributed file storage solution that spreads your data across multiple cloud
 
 ## Features
 
-- **Distributed Storage**: Files are split into chunks and stored across multiple cloud providers (Google Drive, Dropbox)
 - **Redundancy & Security**: Data loss from a single provider doesn't compromise your files
 - **Modern Web Interface**: Easy to use file management with upload/download capabilities
-- **AI Assistant**: Built-in chatbot to help with questions about your storage system
 - **Provider Agnostic**: Works with multiple cloud storage providers simultaneously
 - **Visual Dashboard**: See storage statistics and file information at a glance
 - **Progress Tracking**: Upload progress visualization for large files

@@ -41,7 +41,31 @@ def get_storage_provider(bucket_config: BucketConfig) -> StorageProvider:
         filtered_config = {k: v for k, v in config_dict.items() if v is not None}
         
         try:
-            return provider_class(filtered_config)
+            # Pass additional args needed for specific providers (like Dropbox OAuth)
+            if provider_class is DropboxStorage:
+                from ..config import app_config # Import here to avoid circular dependency at top level
+                if not app_config.dropbox_app_key or not app_config.dropbox_app_secret:
+                     raise ValueError("Dropbox App Key/Secret not configured in environment (ASS_DROPBOX_APP_KEY, ASS_DROPBOX_APP_SECRET)")
+                # Find the index of this bucket in the original config list
+                provider_index = -1
+                for idx, bc in enumerate(app_config.buckets):
+                    # Compare based on a unique identifier if available (e.g., folder_path or credentials if they were still there)
+                    # Here, we might assume order is preserved or use folder_path as a pseudo-ID
+                    if bc.type == bucket_config.type and bc.folder_path == bucket_config.folder_path: 
+                         provider_index = idx
+                         break
+                if provider_index == -1:
+                     raise ValueError(f"Could not determine original index for Dropbox provider config: {bucket_config}")
+                
+                return DropboxStorage(
+                    config=filtered_config, 
+                    provider_index=provider_index,
+                    app_key=app_config.dropbox_app_key,
+                    app_secret=app_config.dropbox_app_secret
+                )
+            else:
+                 # Other providers like GoogleDriveStorage still use the simple config
+                 return provider_class(filtered_config)
         except Exception as e:
              print(f"Error initializing storage provider for type '{bucket_config.type}' with credentials '{bucket_config.credentials}': {e}")
              # Re-raise or handle more gracefully (e.g., return None, log error)

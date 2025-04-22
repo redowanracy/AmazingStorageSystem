@@ -1,6 +1,10 @@
 import os
 import sys
 
+# Load environment variables from .env file if it exists
+from dotenv import load_dotenv
+load_dotenv() 
+
 os.environ["REQUESTS_CA_BUNDLE"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".venv", "Lib", "site-packages", "certifi", "cacert.pem")
 os.environ["SSL_CERT_FILE"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".venv", "Lib", "site-packages", "certifi", "cacert.pem")
 

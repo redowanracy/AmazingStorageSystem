@@ -36,8 +36,8 @@ class ChatbotClient:
         """Check if the chatbot client was initialized successfully."""
         return self.client is not None and self.model is not None
 
-    async def get_response(self, prompt: str) -> str:
-        """Gets a response from the configured LLM."""
+    def get_response(self, prompt: str) -> str:
+        """Gets a response from the configured LLM (synchronous)."""
         if not self.is_enabled():
             return "Sorry, the chatbot is not configured or enabled."
 
@@ -45,7 +45,7 @@ class ChatbotClient:
         
         try:
             if self.provider.lower() == 'gemini':
-                response = await self.model.generate_content_async(prompt)
+                response = self.model.generate_content(prompt)
                 if not response.parts:
                      logger.warning("Gemini response has no parts (potentially blocked).")
                      if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
@@ -58,7 +58,7 @@ class ChatbotClient:
 
         except Exception as e:
             logger.error(f"Error getting response from {self.provider}: {e}", exc_info=True)
-            return f"Sorry, an error occurred while contacting the chatbot: {e}"
+            raise RuntimeError(f"Sorry, an error occurred while contacting the chatbot: {e}")
 
 async def main_test():
     print("Testing ChatbotClient...")
@@ -66,7 +66,7 @@ async def main_test():
     if client.is_enabled():
         test_prompt = "Explain what this Amazing Storage System does in one sentence."
         print(f"Sending prompt: {test_prompt}")
-        response = await client.get_response(test_prompt)
+        response = client.get_response(test_prompt)
         print(f"Received response: {response}")
     else:
         print("Chatbot is not enabled.")

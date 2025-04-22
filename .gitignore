@@ -11,4 +11,10 @@ metadata/
 
 # Secrets / Credentials (IMPORTANT!)
 google_acc*.json
-dropbox_acc*.txt 
+dropbox_acc*.txt
+
+# Environment variables
+.env
+
+# OAuth Tokens (Keep secure!)
+dropbox_tokens_*.json 

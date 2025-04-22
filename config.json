@@ -2,41 +2,32 @@
   "buckets": [
     {
       "type": "google",
-      "credentials": "google_acc0.json",
       "folder_id": "1MBE_dYL30WBY_QtYAtEApwe2oXnnQh8A"
     },
     {
       "type": "google",
-      "credentials": "google_acc1.json",
       "folder_id": "1yR5OeBuf8HdpMJ8yPLQ6owX9wsD_G4mq"
     },
     {
       "type": "google",
-      "credentials": "google_acc2.json",
       "folder_id": "1XwsLkbVwqB15KGCI04TeGLocgCwDOkEC"
     },
     {
       "type": "dropbox",
-      "credentials": "dropbox_acc0.txt",
       "folder_path": "/AmazingStorage0"
     },
     {
       "type": "dropbox",
-      "credentials": "dropbox_acc1.txt",
       "folder_path": "/AmazingStorage1"
     },
     {
       "type": "dropbox",
-      "credentials": "dropbox_acc2.txt",
       "folder_path": "/AmazingStorage2"
     }
   ],
   "chunk_size": 5242880,
-  "encryption_enabled": false,
   "performance_monitoring": true,
-  "web_interface_host": "127.0.0.1",
+  "web_interface_host": "0.0.0.0",
   "web_interface_port": 5000,
-  "chatbot_provider": "gemini",
-  "chatbot_api_key": "AIzaSyBr_mN4Q0ra5KB2fGmzalIFLIxD8R7lDEQ",
-  "telegram_bot_token": "7822222852:AAFfTgnv3rXxDgsHt4fmcL6UdnaxZ9hXRzw"
+  "chatbot_provider": "gemini"
 } 
