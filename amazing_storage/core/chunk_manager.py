@@ -9,7 +9,7 @@ from ..config import app_config
 from ..storage import StorageProvider, get_storage_provider
 from .metadata import MetadataManager, FileManifest, ChunkInfo
 
-# Simple round-robin strategy for now
+# Simple round-robin strategy for provider selection
 class RoundRobinStrategy:
     def __init__(self, num_providers: int):
         if num_providers <= 0:
@@ -22,10 +22,6 @@ class RoundRobinStrategy:
         self.current_index = (self.current_index + 1) % self.num_providers
         return index
 
-# More advanced strategies could be added later (e.g., based on available space)
-# class LeastUsedStrategy: ...
-# class RandomStrategy: ...
-
 
 class ChunkManager:
     """Handles splitting files, distributing chunks, and reassembling files."""
@@ -33,7 +29,7 @@ class ChunkManager:
     def __init__(self, metadata_manager: MetadataManager):
         """Initialize the chunk manager with storage providers from config."""
         self.metadata_manager = metadata_manager
-        self.chunk_size = app_config.chunk_size  # Default chunk size
+        self.chunk_size = app_config.chunk_size
         self.providers = []
         
         # Initialize all providers from config
@@ -54,7 +50,6 @@ class ChunkManager:
         
         # Initialize distribution strategy
         self.distribution_strategy = RoundRobinStrategy(len(self.providers)) if self.providers else None
-        # self.distribution_strategy = LeastUsedStrategy(self.providers) # Example alternative
 
     def _read_file_in_chunks(self, file_path: str) -> Iterator[bytes]:
         """Reads a file and yields chunks of data."""
@@ -91,11 +86,9 @@ class ChunkManager:
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File {file_path} does not exist")
             
-        # Use the original filename if provided, otherwise extract from path
         if not original_filename:
             original_filename = os.path.basename(file_path)
             
-        # Check if we're updating an existing file
         existing_manifest = None
         if file_id:
             existing_manifest = self.metadata_manager.load_manifest(file_id)
@@ -123,7 +116,6 @@ class ChunkManager:
         
         print(f"Starting upload for '{original_filename}' (Size: {file_size / (1024 * 1024):.2f} MB, File ID: {file_id})")
         
-        # Track uploaded chunks for cleanup in case of failure
         uploaded_chunks = []
         
         try:
@@ -161,7 +153,7 @@ class ChunkManager:
                         chunk_idx += 1
                     except Exception as e:
                         print(f"Error uploading chunk {chunk_idx}: {e}")
-                        # Don't continue - clean up and raise the exception
+                        # Ensure cleanup before raising
                         self._cleanup_failed_upload(uploaded_chunks)
                         raise
             
@@ -171,7 +163,7 @@ class ChunkManager:
                 manifest.add_version(chunks, notes=version_notes)
                 print(f"Added new version for '{original_filename}' with {len(chunks)} chunks.")
             else:
-                # For new files, the first version is created with the manifest
+                # For new files, the first version is created implicitly
                 manifest.add_version(chunks, notes="Initial version")
             
             # Save the manifest after all chunks are uploaded
@@ -184,8 +176,7 @@ class ChunkManager:
             print(f"Error during upload of '{original_filename}': {e}")
             # Clean up any chunks that were uploaded before the error
             self._cleanup_failed_upload(uploaded_chunks)
-            # Re-raise the exception
-            raise
+            raise # Re-raise the exception
 
     def _cleanup_failed_upload(self, uploaded_chunks: List[Tuple[int, str]]):
         """Attempts to delete chunks uploaded before a failure occurred."""
@@ -273,8 +264,7 @@ class ChunkManager:
                     if not success:
                          # Log error but continue trying to delete other chunks
                          print(f"  Warning: Failed to delete chunk {chunk_info.chunk_index} (ID: '{chunk_id}') from provider {provider_index}. It might already be deleted or an error occurred.")
-                         # We might not set all_chunks_deleted to False here, as the goal is deletion.
-                         # Depends on desired strictness.
+                         # Depends on desired strictness if this should mark all_chunks_deleted as False.
                 else:
                     print(f"  Warning: Provider index {provider_index} for chunk {chunk_info.chunk_index} is out of bounds. Cannot delete.")
                     all_chunks_deleted = False # Indicate an issue

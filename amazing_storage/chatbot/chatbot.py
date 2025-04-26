@@ -1,7 +1,9 @@
 import google.generativeai as genai
 import logging
+from typing import Dict, List, Optional, Tuple
 
 from ..config import app_config
+from ..core.file_processor import FileProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +15,8 @@ class ChatbotClient:
         self.provider = app_config.chatbot_provider
         self.client = None
         self.model = None
+        self.file_processor = None  # Will be set externally
+        self.conversation_contexts: Dict[str, Dict[str, str]] = {}  # user_id -> {file_id -> content}
 
         if not self.api_key:
             logger.warning("Chatbot API key not configured. Chatbot disabled.")
@@ -32,20 +36,91 @@ class ChatbotClient:
         else:
             logger.warning(f"Chatbot provider '{self.provider}' not recognized or configured. Chatbot disabled.")
 
+    def set_file_processor(self, file_processor: FileProcessor):
+        """Set the file processor for extracting content from files."""
+        self.file_processor = file_processor
+
     def is_enabled(self) -> bool:
         """Check if the chatbot client was initialized successfully."""
         return self.client is not None and self.model is not None
 
-    def get_response(self, prompt: str) -> str:
-        """Gets a response from the configured LLM (synchronous)."""
+    def add_file_to_context(self, user_id: str, file_id: str) -> Tuple[bool, str]:
+        """Add a file to the user's conversation context.
+        
+        Args:
+            user_id: Unique identifier for the user
+            file_id: ID of the file to add to context
+            
+        Returns:
+            Tuple of (success, message)
+        """
+        if not self.file_processor:
+            return False, "File processor not initialized."
+        
+        try:
+            # Initialize user context if not exists
+            if user_id not in self.conversation_contexts:
+                self.conversation_contexts[user_id] = {}
+            
+            # Get file content
+            filename, content = self.file_processor.get_file_content(file_id)
+            
+            # Add to user's context
+            self.conversation_contexts[user_id][file_id] = {
+                'filename': filename,
+                'content': content
+            }
+            
+            return True, f"Added file '{filename}' to conversation context."
+        
+        except Exception as e:
+            logger.error(f"Error adding file {file_id} to context for user {user_id}: {e}", exc_info=True)
+            return False, f"Error adding file to context: {str(e)}"
+
+    def remove_file_from_context(self, user_id: str, file_id: str) -> bool:
+        """Remove a file from the user's conversation context."""
+        if user_id in self.conversation_contexts and file_id in self.conversation_contexts[user_id]:
+            del self.conversation_contexts[user_id][file_id]
+            return True
+        return False
+
+    def get_response(self, prompt: str, user_id: Optional[str] = None) -> str:
+        """Gets a response from the configured LLM (synchronous).
+        
+        Args:
+            prompt: The user's question or prompt
+            user_id: Optional user ID to include file context
+        """
         if not self.is_enabled():
             return "Sorry, the chatbot is not configured or enabled."
 
-        logger.info(f"Sending prompt to {self.provider}: '{prompt[:50]}...'")
+        # Build context-enhanced prompt if user_id is provided
+        enhanced_prompt = prompt
+        if user_id and user_id in self.conversation_contexts and self.conversation_contexts[user_id]:
+            context_text = "\n\nReference Documents:\n"
+            for file_id, file_data in self.conversation_contexts[user_id].items():
+                context_text += f"\n--- Document: {file_data['filename']} ---\n"
+                # Truncate content if too long (Gemini has context limits)
+                content = file_data['content']
+                if len(content) > 10000:  # Arbitrary limit, adjust based on model
+                    content = content[:10000] + "... [content truncated]"
+                context_text += content + "\n"
+            
+            # Create system context with file information
+            system_context = (
+                "You are an AI assistant that helps users understand their documents. "
+                "Below are the contents of documents the user has uploaded. "
+                "Use this information to answer the user's questions about these documents. "
+                "If the question is not related to the documents, you can answer based on your general knowledge."
+            )
+            
+            enhanced_prompt = f"{system_context}\n{context_text}\n\nUser Question: {prompt}"
+            
+        logger.info(f"Sending prompt to {self.provider}: '{enhanced_prompt[:50]}...'")
         
         try:
             if self.provider.lower() == 'gemini':
-                response = self.model.generate_content(prompt)
+                response = self.model.generate_content(enhanced_prompt)
                 if not response.parts:
                      logger.warning("Gemini response has no parts (potentially blocked).")
                      if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
@@ -74,4 +149,4 @@ async def main_test():
 if __name__ == '__main__':
     import asyncio
     logging.basicConfig(level=logging.INFO)
-    asyncio.run(main_test()) 
+    asyncio.run(main_test())

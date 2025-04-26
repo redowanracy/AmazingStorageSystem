@@ -12,21 +12,20 @@ from google.oauth2 import service_account
 from google.auth.exceptions import GoogleAuthError
 
 from .base import StorageProvider, StorageProviderError
-from ..config import BucketConfig # Use BucketConfig for type hinting if desired
+from ..config import BucketConfig 
 
-# If modifying these scopes, delete the previously saved credentials
-# file (if using OAuth flow, not service account)
+
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 class GoogleDriveStorage(StorageProvider):
     """Storage provider implementation for Google Drive."""
 
     def __init__(self, config: Dict[str, Any]):
-        """Initializes the Google Drive client."""
+        """Initializes the Google Drive client using service account credentials."""
         super().__init__(config)
         self.provider_type = "google"
         self.credentials_file = config.get("credentials")
-        self.folder_id = config.get("folder_id") # Target folder ID
+        self.folder_id = config.get("folder_id") # Target folder ID for uploads
         if not self.credentials_file:
             raise ValueError("Google Drive 'credentials' path is required in config.")
         if not self.folder_id:
@@ -49,9 +48,8 @@ class GoogleDriveStorage(StorageProvider):
         """Authenticates using service account credentials."""
         try:
             # Load credentials from the service account file
-            scopes = ['https://www.googleapis.com/auth/drive']
             credentials = service_account.Credentials.from_service_account_file(
-                self.credentials_file, scopes=scopes)
+                self.credentials_file, scopes=SCOPES)
             
             # Build the drive service
             drive_service = build("drive", "v3", credentials=credentials)
@@ -91,20 +89,17 @@ class GoogleDriveStorage(StorageProvider):
         """Uploads a chunk to the configured Google Drive folder."""
         temp_path = None
         try:
-            # Create a temporary file and ensure it's properly closed before upload
+            # Create a temporary file to handle upload via MediaFileUpload
             with tempfile.NamedTemporaryFile(delete=False) as temp_file:
                 temp_path = temp_file.name
                 temp_file.write(chunk_data)
-                # Ensure file is flushed and closed properly
-                temp_file.flush()
-            
-            # File is now closed, upload the file to Google Drive
+                temp_file.flush() # Ensure data is written before closing
+
             file_metadata = {
                 'name': chunk_name,
                 'parents': [self.folder_id]
             }
-            
-            # Use with statement to ensure proper resource cleanup
+
             with open(temp_path, 'rb') as f:
                 media = MediaFileUpload(temp_path, mimetype='application/octet-stream', resumable=True)
                 file = self.drive_service.files().create(
@@ -112,8 +107,6 @@ class GoogleDriveStorage(StorageProvider):
                     media_body=media,
                     fields='id'
                 ).execute()
-            
-            # Return the file ID
             return file.get('id')
         except HttpError as e:
             raise StorageProviderError(
@@ -128,13 +121,11 @@ class GoogleDriveStorage(StorageProvider):
                 original_error=e
             )
         finally:
-            # Clean up the temporary file in a finally block to ensure it happens
-            # even if an exception occurs
+            # Clean up temporary file regardless of success or failure
             if temp_path and os.path.exists(temp_path):
                 try:
                     os.unlink(temp_path)
                 except Exception as e:
-                    # Just log the error but don't raise, as we're already in exception handling
                     print(f"Warning: Failed to delete temporary file {temp_path}: {e}")
 
     def download_chunk(self, chunk_id: str) -> bytes:
@@ -172,16 +163,13 @@ class GoogleDriveStorage(StorageProvider):
     def list_files(self, folder_path: str = "") -> List[Dict[str, Any]]:
         """Lists files/folders within the configured parent folder."""
         try:
-            # In Google Drive, we use the folder ID directly
-            folder_id = self.folder_id
+            target_folder_id = self.folder_id
             if folder_path:
-                # If a subfolder path is provided, find its ID first
-                # (implementation would depend on how you organize subfolders)
                 pass
             
             # Query for files in the folder
             results = self.drive_service.files().list(
-                q=f"'{folder_id}' in parents and trashed=false",
+                q=f"'{target_folder_id}' in parents and trashed=false",
                 fields="files(id, name, mimeType, size)"
             ).execute()
             
@@ -218,7 +206,7 @@ class GoogleDriveStorage(StorageProvider):
             return True
         except HttpError as e:
             if e.resp.status == 404:
-                # File already doesn't exist, consider deletion successful
+                # File already deleted, consider success
                 return True
             else:
                 raise StorageProviderError(
@@ -236,21 +224,18 @@ class GoogleDriveStorage(StorageProvider):
     def get_sizedata(self) -> Tuple[int, int]:
         """Gets storage quota information for the Drive account."""
         try:
-            # Google Drive API doesn't provide a direct way to get storage quota
-            # We'll calculate used space by summing up file sizes in our folder
-            
-            results = self.drive_service.files().list(
-                q=f"'{self.folder_id}' in parents and trashed=false",
-                fields="files(size)"
-            ).execute()
-            
-            files = results.get('files', [])
-            used_space = sum(int(file.get('size', 0)) for file in files)
-            
-            # For simplicity, we'll set a large arbitrary number for total space
-            # In a real app, you'd use the Drive About API to get quota info
-            total_space = 15 * 1024 * 1024 * 1024  # 15 GB (Google's free tier)
-            
+            # Use the Drive About API for accurate quota info
+            about = self.drive_service.about().get(fields="storageQuota").execute()
+            storage_quota = about.get('storageQuota', {})
+            total_space = int(storage_quota.get('limit', 0))
+            used_space = int(storage_quota.get('usage', 0))
+
+            # If limit is not reported (e.g., enterprise account), provide used space only
+            if total_space == 0:
+                 print("Warning: Could not determine total storage limit from Google Drive API.")
+                 # Fallback or alternative representation might be needed
+                 total_space = used_space # Or set to a large number or None
+
             return (total_space, used_space)
         except HttpError as e:
             raise StorageProviderError(

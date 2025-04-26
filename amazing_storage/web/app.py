@@ -13,9 +13,9 @@ from functools import wraps
 # Make sure core components are importable
 from ..core.metadata import MetadataManager
 from ..core.chunk_manager import ChunkManager
+from ..core.file_processor import FileProcessor
 from ..config import app_config
 from ..chatbot.chatbot import ChatbotClient
-from ..auth.auth_manager import AuthManager
 
 # Add Dropbox imports
 from dropbox import DropboxOAuth2Flow
@@ -34,258 +34,27 @@ print(f"Flask app configured. Using temporary upload folder: {UPLOAD_FOLDER}")
 metadata_manager = MetadataManager(metadata_dir="metadata")
 chunk_manager = ChunkManager(metadata_manager)
 chatbot_client = ChatbotClient()
-auth_manager = AuthManager()
+file_processor = FileProcessor(metadata_manager, chunk_manager)
 
-# Import share manager here to avoid circular import
-from ..models.share import ShareManager
+# Set file processor for chatbot
+chatbot_client.set_file_processor(file_processor)
 
-# After other route handlers but before the run function
+# Track active file contexts per user session
+user_active_files = {}
 
-@app.route('/share-file/<file_id>', methods=['GET', 'POST'])
-def share_file(file_id):
-    """Create a new share link for a file."""
-    if not session.get('user_id'):
-        flash('You must be logged in to share files', 'error')
-        return redirect('/login')
+@app.before_request
+def initialize_session():
+    """Initialize session variables if they don't exist."""
+    if 'user_id' not in session:
+        session['user_id'] = secrets.token_hex(16)
     
-    # Get the file info to make sure it exists and belongs to user
-    try:
-        manifest = metadata_manager.load_manifest(file_id)
-        if not manifest:
-            flash('File not found', 'error')
-            return redirect('/dashboard')
-        
-        if manifest.user_id != session['user_id']:
-            flash('You can only share your own files', 'error')
-            return redirect('/dashboard')
-            
-    except Exception as e:
-        flash(f'Error loading file: {str(e)}', 'error')
-        return redirect('/dashboard')
-    
-    if request.method == 'POST':
-        try:
-            # Get form data with defaults
-            expiry_hours = int(request.form.get('expiry_hours', 24))
-            download_limit = int(request.form.get('download_limit', 0))
-            password = request.form.get('password', '')
-            notes = request.form.get('notes', '')
-            
-            # Create the share
-            share_manager = ShareManager(request.host_url.rstrip('/'))
-            share = share_manager.create_share(
-                file_id=file_id,
-                creator_id=session['user_id'],
-                expiry_hours=expiry_hours,
-                download_limit=download_limit,
-                password=password if password else None,
-                notes=notes
-            )
-            
-            # Calculate expiry date for display
-            expiry_date = datetime.fromtimestamp(share.expires_at).strftime("%Y-%m-%d %H:%M:%S") if share.expires_at > 0 else "Never"
-            
-            return render_template(
-                'share_created.html', 
-                share=share,
-                filename=manifest.original_filename,
-                expiry_date=expiry_date,
-                share_url=share.get_share_url(request.host_url.rstrip('/')),
-                is_password_protected=bool(password)
-            )
-            
-        except Exception as e:
-            flash(f'Error creating share: {str(e)}', 'error')
-            return redirect(f'/dashboard')
-    
-    # GET request: render the share creation form
-    return render_template('create_share.html', file_id=file_id, filename=manifest.original_filename)
-
-
-@app.route('/share/<share_id>/<access_token>', methods=['GET', 'POST'])
-def access_shared_file(share_id, access_token):
-    """Access a shared file using a share link."""
-    share_manager = ShareManager()
-    share = share_manager.get_share(share_id, access_token)
-    
-    if not share:
-        flash('Invalid or expired share link', 'error')
-        return redirect('/')
-    
-    if not share.is_valid():
-        flash('This share link has expired', 'error')
-        return redirect('/')
-    
-    # Handle password verification
-    if share.password_hash:
-        if request.method == 'POST':
-            password = request.form.get('password', '')
-            if not share.verify_password(password):
-                flash('Incorrect password', 'error')
-                return render_template('share_password.html', share_id=share_id, access_token=access_token)
-        else:
-            # Show password form on GET request
-            return render_template('share_password.html', share_id=share_id, access_token=access_token)
-    
-    try:
-        # Get the file manifest
-        manifest = metadata_manager.load_manifest(share.file_id)
-        if not manifest:
-            flash('The shared file no longer exists', 'error')
-            return redirect('/')
-        
-        # Increment download counter for limit tracking
-        share.increment_downloads()
-        
-        # Generate download URL with access_token as query param to authorize this specific download
-        download_url = f'/share-download/{share.file_id}?token={access_token}&share={share_id}'
-        
-        return render_template(
-            'view_shared_file.html',
-            filename=manifest.original_filename,
-            filesize=manifest.total_size,
-            share=share,
-            download_url=download_url
-        )
-        
-    except Exception as e:
-        flash(f'Error accessing shared file: {str(e)}', 'error')
-        return redirect('/')
-
-
-@app.route('/share-download/<file_id>')
-def download_shared_file(file_id):
-    """Download a file through a share link."""
-    # Verify access is through a valid share link
-    share_id = request.args.get('share')
-    token = request.args.get('token')
-    
-    if not share_id or not token:
-        flash('Invalid download request', 'error')
-        return redirect('/')
-    
-    share_manager = ShareManager()
-    share = share_manager.get_share(share_id, token)
-    
-    if not share or not share.is_valid() or share.file_id != file_id:
-        flash('Invalid or expired share link', 'error')
-        return redirect('/')
-    
-    try:
-        manifest = metadata_manager.load_manifest(file_id)
-        if not manifest:
-            flash('The shared file no longer exists', 'error')
-            return redirect('/')
-        
-        # Create temporary file
-        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-            temp_filename = temp_file.name
-        
-        # Download and reconstruct the file
-        chunk_manager.download_file(manifest, temp_filename)
-        
-        # Serve the file as an attachment
-        return send_file(
-            temp_filename,
-            as_attachment=True,
-            download_name=manifest.original_filename,
-            mimetype='application/octet-stream'
-        )
-        
-    except Exception as e:
-        flash(f'Error downloading file: {str(e)}', 'error')
-        return redirect('/')
-
-
-@app.route('/my-shares')
-def my_shares():
-    """List all shares created by the user."""
-    if not session.get('user_id'):
-        flash('You must be logged in to view your shares', 'error')
-        return redirect('/login')
-    
-    try:
-        share_manager = ShareManager()
-        shares = share_manager.list_shares_by_creator(session['user_id'])
-        
-        # Get file information for each share
-        share_info = []
-        for share in shares:
-            try:
-                manifest = metadata_manager.load_manifest(share.file_id)
-                filename = manifest.original_filename if manifest else "File not found"
-                
-                # Calculate expiry date for display
-                expiry_date = datetime.fromtimestamp(share.expires_at).strftime("%Y-%m-%d %H:%M:%S") if share.expires_at > 0 else "Never"
-                
-                share_info.append({
-                    'share': share,
-                    'filename': filename,
-                    'is_valid': share.is_valid(),
-                    'is_password_protected': bool(share.password_hash),
-                    'expiry_date': expiry_date,
-                    'share_url': share.get_share_url(request.host_url.rstrip('/'))
-                })
-            except Exception as e:
-                print(f"Error processing share {share.share_id}: {e}")
-                
-        return render_template('my_shares.html', shares=share_info)
-        
-    except Exception as e:
-        flash(f'Error loading shares: {str(e)}', 'error')
-        return redirect('/dashboard')
-
-
-@app.route('/delete-share/<share_id>', methods=['POST'])
-def delete_share(share_id):
-    """Delete a share link."""
-    if not session.get('user_id'):
-        flash('You must be logged in to manage your shares', 'error')
-        return redirect('/login')
-    
-    try:
-        share_manager = ShareManager()
-        success = share_manager.delete_share(share_id, session['user_id'])
-        
-        if success:
-            flash('Share link deleted successfully', 'success')
-        else:
-            flash('Unable to delete share link', 'error')
-            
-    except Exception as e:
-        flash(f'Error deleting share: {str(e)}', 'error')
-        
-    return redirect('/my-shares')
-
-
-# Administrative function to clean up expired shares
-def cleanup_expired_shares_task():
-    """Background task to clean up expired shares."""
-    try:
-        share_manager = ShareManager()
-        count = share_manager.cleanup_expired_shares()
-        print(f"Cleaned up {count} expired shares")
-    except Exception as e:
-        print(f"Error cleaning up expired shares: {e}")
-
-# Login required decorator
-def login_required(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if 'username' not in session:
-            flash('Please login to access this page', 'warning')
-            return redirect(url_for('login'))
-        return f(*args, **kwargs)
-    return decorated_function
+    # Initialize user's active files tracking
+    user_id = session['user_id']
+    if user_id not in user_active_files:
+        user_active_files[user_id] = set()
 
 def get_dropbox_oauth_flow():
     """Get a DropboxOAuth2Flow configured from the app settings."""
-    # --- DEBUG PRINT --- 
-    print(f"[DEBUG app.py] Using dropbox_app_key: {app_config.dropbox_app_key}")
-    print(f"[DEBUG app.py] Using dropbox_app_secret: {app_config.dropbox_app_secret}")
-    print(f"[DEBUG app.py] Using dropbox_redirect_uri: {app_config.dropbox_redirect_uri}")
-    # --- END DEBUG --- 
-    
     # Check for required credentials
     if not app_config.dropbox_app_key:
         raise ValueError("Dropbox App Key not configured (ASS_DROPBOX_APP_KEY)")
@@ -459,10 +228,24 @@ def upload_file_route():
                 os.remove(temp_path)
                 app.logger.info(f"Temporary file removed: {temp_path}")
 
+            # Add file to user's active files for AI context
+            user_id = session.get('user_id')
+            if user_id and file_id:
+                if user_id not in user_active_files:
+                    user_active_files[user_id] = set()
+                user_active_files[user_id].add(file_id)
+                
+                # Add file to chatbot context
+                success, message = chatbot_client.add_file_to_context(user_id, file_id)
+                context_status = "File added to AI context. You can now ask questions about it!" if success else f"Note: {message}"
+                app.logger.info(f"Added file {file_id} to AI context for user {user_id}: {success}")
+            else:
+                context_status = ""
+
             # Return success response
             if file_id:
-                flash(f"File '{filename}' uploaded successfully (ID: {file_id})", "success")
-                return jsonify({"message": f"File '{filename}' uploaded successfully", "file_id": file_id}), 201
+                flash(f"File '{filename}' uploaded successfully (ID: {file_id}). {context_status}", "success")
+                return jsonify({"message": f"File '{filename}' uploaded successfully", "file_id": file_id, "added_to_context": bool(user_id)}), 201
             else:
                 raise ValueError("Upload process didn't return a valid file ID")
                 
@@ -544,6 +327,19 @@ def download_file_route(file_id):
 def delete_file_route(file_id):
     """Handles file deletion."""
     try:
+        # Remove from user's active files and chatbot context if present
+        user_id = session.get('user_id')
+        if user_id:
+            # Remove from user's active files tracking
+            if user_id in user_active_files and file_id in user_active_files[user_id]:
+                user_active_files[user_id].remove(file_id)
+                app.logger.info(f"Removed file {file_id} from active files for user {user_id}")
+            
+            # Remove from chatbot context
+            chatbot_client.remove_file_from_context(user_id, file_id)
+            app.logger.info(f"Removed file {file_id} from chatbot context for user {user_id}")
+        
+        # Delete the file from storage
         success = chunk_manager.delete_file(file_id)
         if success:
             flash(f"File (ID: {file_id}) deleted successfully.", "success")
@@ -567,6 +363,9 @@ def chat():
             
         if not chatbot_client.is_enabled():
             return jsonify({"response": "Sorry, the chatbot is not available at the moment."}), 200
+        
+        # Get user ID from session
+        user_id = session.get('user_id')
             
         # Create system context about the storage system
         system_context = (
@@ -575,8 +374,8 @@ def chat():
         
         full_prompt = f"{system_context}\n\nUser question: {message}"
         
-        # Get response from the chatbot - now using the synchronous call
-        response = chatbot_client.get_response(full_prompt)
+        # Get response from the chatbot - now using the synchronous call with user context
+        response = chatbot_client.get_response(full_prompt, user_id=user_id)
         
         return jsonify({"response": response}), 200
     
@@ -603,7 +402,7 @@ def view_versions(file_id):
     # Format timestamps for display
     formatted_versions = []
     for version in versions:
-        timestamp = datetime.datetime.fromtimestamp(version.timestamp)
+        timestamp = datetime.fromtimestamp(version.timestamp)
         formatted_versions.append({
             'version_id': version.version_id,
             'timestamp': timestamp.strftime('%Y-%m-%d %H:%M:%S'),
@@ -706,6 +505,70 @@ def update_file(file_id):
         file_id=file_id, 
         filename=manifest.original_filename
     )
+
+# --- File Context Management Routes ---
+
+@app.route('/file_context/add/<file_id>', methods=['POST'])
+def add_file_to_context(file_id):
+    """Add a file to the user's chat context."""
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({"error": "User session not found"}), 400
+        
+    # Check if file exists
+    manifest = metadata_manager.load_manifest(file_id)
+    if not manifest:
+        return jsonify({"error": "File not found"}), 404
+    
+    # Add to user's active files tracking
+    if user_id not in user_active_files:
+        user_active_files[user_id] = set()
+    user_active_files[user_id].add(file_id)
+    
+    # Add to chatbot context
+    success, message = chatbot_client.add_file_to_context(user_id, file_id)
+    
+    if success:
+        return jsonify({"message": f"File '{manifest.original_filename}' added to chat context", "file_id": file_id}), 200
+    else:
+        return jsonify({"error": message}), 500
+
+@app.route('/file_context/remove/<file_id>', methods=['POST'])
+def remove_file_from_context(file_id):
+    """Remove a file from the user's chat context."""
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({"error": "User session not found"}), 400
+    
+    # Remove from user's active files tracking
+    if user_id in user_active_files and file_id in user_active_files[user_id]:
+        user_active_files[user_id].remove(file_id)
+    
+    # Remove from chatbot context
+    success = chatbot_client.remove_file_from_context(user_id, file_id)
+    
+    return jsonify({"message": "File removed from chat context", "file_id": file_id}), 200
+
+@app.route('/file_context/list', methods=['GET'])
+def list_context_files():
+    """List files in the user's chat context."""
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({"error": "User session not found"}), 400
+    
+    # Get active files for this user
+    active_file_ids = user_active_files.get(user_id, set())
+    active_files = []
+    
+    for file_id in active_file_ids:
+        manifest = metadata_manager.load_manifest(file_id)
+        if manifest:
+            active_files.append({
+                'id': file_id,
+                'name': manifest.original_filename
+            })
+    
+    return jsonify({"files": active_files}), 200
 
 # --- API Endpoints for Mobile App --- 
 
@@ -885,121 +748,6 @@ def api_chat():
         # Catch any other unexpected errors
         app.logger.error(f"Error in /api/chat endpoint: {e}", exc_info=True)
         return jsonify({"error": "An internal server error occurred", "details": str(e)}), 500
-
-# Authentication Routes
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST':
-        username = request.form.get('username')
-        password = request.form.get('password')
-        
-        # For demo, just accept any input
-        session['user_id'] = 'demo_user'
-        session['username'] = username
-        session['role'] = 'user'
-        flash(f'Welcome, {username}!', 'success')
-        return redirect(url_for('index'))
-        
-    return render_template('login.html')
-
-@app.route('/register', methods=['GET', 'POST'])
-def register():
-    if request.method == 'POST':
-        username = request.form.get('username')
-        email = request.form.get('email')
-        password = request.form.get('password')
-        confirm_password = request.form.get('confirm_password')
-        
-        # Simple validation
-        if password != confirm_password:
-            flash('Passwords do not match!', 'danger')
-            return render_template('register.html')
-        
-        # For demo, just accept registration
-        flash(f'Account successfully created for {username}. Please log in.', 'success')
-        return redirect(url_for('login'))
-        
-    return render_template('register.html')
-
-@app.route('/logout')
-def logout():
-    session.clear()
-    flash('You have been logged out.', 'info')
-    return redirect(url_for('login'))
-
-@app.route('/dashboard')
-@login_required
-def dashboard():
-    """Display the user dashboard with account status and storage statistics"""
-    message = request.args.get('message', '')
-    
-    # Get basic file list and storage stats
-    try:
-        file_ids_names = chunk_manager.list_files()
-        
-        # Enhance with chunk counts
-        files_with_details = []
-        for file_id, filename in file_ids_names:
-            # Load manifest to get chunk information
-            manifest = metadata_manager.load_manifest(file_id)
-            chunk_count = 0
-            if manifest is not None and hasattr(manifest, 'chunks'):
-                chunk_count = len(manifest.chunks)
-            
-            # Add tuple with (file_id, filename, chunk_count)
-            files_with_details.append((file_id, filename, chunk_count))
-            
-        # Sort by filename
-        files_with_details.sort(key=lambda item: item[1].lower())
-        
-        total_providers = len(chunk_manager.providers)
-        total_files = len(files_with_details)
-        chunk_size_mb = app_config.chunk_size / (1024 * 1024)
-        
-    except Exception as e:
-        app.logger.error(f"Error loading dashboard data: {e}")
-        flash(f"Error loading dashboard data: {e}", "danger")
-        files_with_details = []
-        total_providers = 0
-        total_files = 0
-        chunk_size_mb = 0
-    
-    # Get file icon helper function
-    def get_file_icon(filename):
-        ext = filename.split('.')[-1].lower() if '.' in filename else ''
-        icons = {
-            'pdf': 'bi-file-earmark-pdf',
-            'doc': 'bi-file-earmark-word',
-            'docx': 'bi-file-earmark-word',
-            'xls': 'bi-file-earmark-excel',
-            'xlsx': 'bi-file-earmark-excel',
-            'ppt': 'bi-file-earmark-ppt',
-            'pptx': 'bi-file-earmark-ppt',
-            'jpg': 'bi-file-earmark-image',
-            'jpeg': 'bi-file-earmark-image',
-            'png': 'bi-file-earmark-image',
-            'gif': 'bi-file-earmark-image',
-            'zip': 'bi-file-earmark-zip',
-            'rar': 'bi-file-earmark-zip',
-            'txt': 'bi-file-earmark-text',
-            'mp3': 'bi-file-earmark-music',
-            'mp4': 'bi-file-earmark-play',
-            'py': 'bi-file-earmark-code',
-            'js': 'bi-file-earmark-code',
-            'html': 'bi-file-earmark-code',
-            'css': 'bi-file-earmark-code',
-        }
-        return icons.get(ext, 'bi-file-earmark')
-    
-    return render_template(
-        'dashboard.html',
-        files=files_with_details,
-        total_providers=total_providers,
-        total_files=total_files,
-        chunk_size_mb=f"{chunk_size_mb:.1f}",
-        get_file_icon=get_file_icon,
-        message=message
-    )
 
 def run_app():
     print(f"Flask development server starting on http://{app_config.web_interface_host}:{app_config.web_interface_port}")

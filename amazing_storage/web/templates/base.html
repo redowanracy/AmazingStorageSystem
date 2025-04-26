@@ -80,30 +80,6 @@
                     <li class="nav-item">
                         <a class="nav-link" href="/">Home</a>
                     </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="/dashboard">Dashboard</a>
-                    </li>
-                </ul>
-                <ul class="navbar-nav">
-                    {% if session.get('username') %}
-                    <li class="nav-item dropdown">
-                        <a class="nav-link dropdown-toggle" href="#" id="userDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
-                            {{ session.get('username') }}
-                        </a>
-                        <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
-                            <li><a class="dropdown-item" href="/dashboard">Dashboard</a></li>
-                            <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="/logout">Logout</a></li>
-                        </ul>
-                    </li>
-                    {% else %}
-                    <li class="nav-item">
-                        <a class="nav-link" href="/login">Login</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="/register">Register</a>
-                    </li>
-                    {% endif %}
                 </ul>
             </div>
         </div>

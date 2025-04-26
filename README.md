@@ -83,7 +83,3 @@ The system includes an AI chatbot that can:
 - Explain the benefits of distributed storage
 - Provide general file management guidance
 - Assist with understanding system features
-
-## License
-
-MIT License 
